@@ -6,6 +6,8 @@
 #include "net.hpp"
 #include "fpga.hpp"
 
+#define COARSEN_THRESH 20
+
 typedef std::pair<std::map<std::string, Node*>, std::vector<Net*>> Graph;
 
 class Solver {
@@ -15,7 +17,11 @@ public:
         _parse();
     }
 
-    bool run() { return _run(); }
+    bool run() {
+        _graphs.resize(1);
+        _boundaries.clear();
+        return _run(_graphs[0], _fpgas.size());
+    }
     
     void save_results() { _save_results(); }
 
@@ -23,8 +29,13 @@ private:
     std::string _input_dir;
     Config _config;
 
-    std::vector<Graph> _graphs;
+    // fpga list
     std::vector<FPGA> _fpgas;
+
+    // tree of partitioned graphs
+    std::vector<Graph> _graphs;
+
+    std::vector<std::vector<Net*>> _boundaries;
 
     void _parse() {
         std::map<std::string, Node*> nodes = _parse_nodes();
@@ -34,9 +45,24 @@ private:
         _graphs.emplace_back(nodes, nets);
     }
 
-    bool _run() {
+    bool _run(Graph &graph, int num_parts) {
+        if (num_parts == 1) // base
+            return true;
+
+        auto res = _bisect(graph, num_parts);
+        auto bisection = res.first;
+        auto boundary = res.second;
+        if (bisection.size() == 2) {
+            _graphs.push_back(bisection[0]);
+            _graphs.push_back(bisection[1]);
+            _boundaries.push_back(boundary);
+            int len = _graphs.size();
+            return _run(_graphs[len-2], num_parts / 2) && _run(_graphs[len-1], num_parts / 2);
+        }
         return false;
     }
+
+
 
     void _save_results() {
 
@@ -96,33 +122,54 @@ private:
     }
 
     std::vector<Net*> _parse_nets(std::map<std::string, Node*> nodes) {
-        std::vector<Net*> nets;
         std::ifstream in(_input_dir + "/" + net_def_file);
         if (!in.is_open()) {
             std::cerr << "Error reading " << net_def_file << std::endl;
         }
 
-        Net *net = nullptr;
+        // map from net list string to weigh
+        std::map<std::string, int> net_raw;
+        std::string net = "";
         std::string line;
         while (std::getline(in, line)) {
             int pos = line.find_first_of(' ');
             std::string node_name = line.substr(0, pos);
-            // int node_num = std::stoi(node_name.substr(1));
             line = line.substr(pos + 1);
 
             pos = line.find_first_of(' ');
             if (pos != std::string::npos) { // type "s"
                 line = line.substr(pos + 1);
                 int weight = std::stoi(line);
-                nodes[node_name]->is_driver = true;
 
-                if (net != nullptr) {
-                    nets.push_back(net);
+                if (net != "") {
+                    net_raw[net] = weight; // duplicate net will be overwritten
                 }
-                net = new Net(nodes[node_name], weight);
+                net = node_name;
             } else { // type "l"
-                net->node_set.insert(nodes[node_name]);
+                net = net + " " + node_name;
             }
+        }
+
+        std::vector<Net*> nets;
+        for (auto e: net_raw) {
+            int weight = e.second;
+            std::istringstream iss(e.first);
+
+            std::string driver;
+            iss >> driver;
+            Node *driver_node = nodes[driver];
+            Net *net = new Net(driver_node, weight);
+            net->node_set.insert(driver_node);
+            driver_node->net_set.insert(net);
+            driver_node->drives.insert(net);
+
+            std::string tmp;
+            while (iss >> tmp) {
+                Node *node = nodes[tmp];
+                net->node_set.insert(node);
+                node->net_set.insert(net);
+            }
+            nets.push_back(net);
         }
         return nets;
     }
@@ -207,16 +254,100 @@ private:
         return result;
     }
 
-    // static std::vector<std::string> _split(const std::string &s, const char c) {
-    //     std::vector<std::string> result;
-    //     std::string tmp = s;
-    //     while (tmp.size() > 0) {
-    //         int pos = tmp.find_first_of(c);
-    //         if (pos != )
-    //         result.push_back(tmp.substr(pos));
-    //         tmp = tmp.substr
-    //     }
-    // }
+    /**
+     * @brief Bisect the graph into 2 parts
+     * 
+     * @param graph 
+     * @param target_num_parts the number of parts the graph will eventually be divided into
+     * @return std::pair<std::vector<Graph>, std::vector<Net*>> 
+     */
+    std::pair<std::vector<Graph>, std::vector<Net*>> _bisect(Graph &graph, int target_num_parts) {
+        std::vector<Graph> graph_seq = _coarsen(graph, target_num_parts);
+        Graph &last = graph_seq.back();
+        _do_bisect(last);
+        _uncoarsen(graph, graph_seq);
+
+        // interpret result
+
+        return std::make_pair(std::vector<Graph>(), std::vector<Net*>());
+    }
+
+    // coarsen
+    std::vector<Graph> _coarsen(Graph &graph, int target_num_parts) {
+        std::vector<Graph> res;
+        Graph &cur_graph = graph;
+        int size = cur_graph.first.size();
+        while (size > COARSEN_THRESH) {
+            // new graph
+            std::map<std::string, Node*> nodes;
+            std::vector<Net*> nets;
+
+            // vertice address -> hypernode name
+            std::map<Node*, std::string> matched_vertices;
+
+            std::vector<Net*> original_nets(cur_graph.second);
+            std::sort(original_nets.begin(), original_nets.end(), [](const Net* &a, const Net* &b) {
+                return (a->cost > b->cost) || (a->cost == b->cost && a->node_set.size() < b->node_set.size());
+            });
+
+            // first pass
+            for (auto net: original_nets) {
+                std::vector<Node*> nodes_to_merge;
+
+                // prepare
+                std::set<int> board_constraints;
+                for (auto _n: net->node_set) {
+                    if (matched_vertices.count(_n)) { // already matched
+                        continue;
+                    }
+                    if (_n->is_fixed) {
+                        board_constraints.insert(_n->assigned_fpga.begin(), _n->assigned_fpga.end());
+                    }
+                    nodes_to_merge.push_back(_n);
+                }
+                if (board_constraints.size() > target_num_parts) {
+                    // the number of nodes with different fixed allocations
+                    // exceeds `target_num_parts`, so nodes cannot be merged
+                    continue;
+                }
+
+                // merge the node
+                Node *merged_node = new Node(nodes_to_merge);
+                for (auto _n: nodes_to_merge) { // add to matched
+                    matched_vertices[_n] = merged_node->node_name;
+                }
+            }
+
+            // second pass
+
+
+            
+            // add to list
+            res.push_back(std::make_pair(nodes, nets));
+            cur_graph = res.back();
+            size = cur_graph.first.size();
+        }
+
+        return res;
+    }
+
+    // split
+    bool _do_bisect(Graph &graph) {
+        return false;
+    }
+
+    void _uncoarsen(Graph &base, std::vector<Graph> &graph_seq) {
+
+        // release memory
+        for (auto g: graph_seq) {
+            for (auto n: g.first) {
+                delete n.second;
+            }
+            for (auto n: g.second) {
+                delete n;
+            }
+        }
+    }
 };
 
 #endif
