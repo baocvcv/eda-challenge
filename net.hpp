@@ -6,13 +6,15 @@
 struct Node;
 
 struct Net {
-    std::set<Node*> node_set;
+    int index;
 
-    Node* driver;
+    std::set<std::string> node_set;
+
+    std::string driver;
 
     int cost;
 
-    Net (Node *_driver, int _cost): driver(_driver), cost(_cost) {
+    Net (int _index, const std::string &_driver, int _cost): index(_index), driver(_driver), cost(_cost) {
         node_set.insert(_driver);
     }
 };

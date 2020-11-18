@@ -29,7 +29,7 @@ int main(int argc, const char *argv[]) {
 
         if (result.count("help")) {
             cout << options.help({""}) << endl;
-            exit(0);
+            return 0;
         }
 
         if (result.count("input")) {
@@ -37,7 +37,7 @@ int main(int argc, const char *argv[]) {
         } else {
             cerr << "Missing input file directory" << endl;
             cout << options.help({""}) << endl;
-            exit(0);
+            return 0;
         }
 
         if (result.count("int-mincut"))
@@ -59,10 +59,18 @@ int main(int argc, const char *argv[]) {
 
     } catch (const cxxopts::OptionException& e) {
         cerr << "error parsing options: " << e.what() << endl;
-        exit(1);
+        return 1;
     }
 
     Solver solver(input_dir, config);
+    Error err = solver.check_input();
+    if (err.first) {
+        cerr << err.second << endl;
+        return 1;
+    }
+    solver.run(/* mode= */ Solver::Method::Multilevel);
+    
+    solver.validate_and_save();
 
     return 0;
 }
