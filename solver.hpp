@@ -1203,7 +1203,7 @@ private:
 
         // save resource results
         _fn = _input_dir + "/" + eval_file;
-        out = std::ofstream(_fn);
+        out.open(_fn);
         if (!out.is_open()) {
             std::cerr << "Cannot open " << _fn << " to write" << std::endl;
             return;
