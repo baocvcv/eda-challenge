@@ -2,3 +2,4 @@ main
 debug
 *.o
 .idea
+*.out
