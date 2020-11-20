@@ -86,9 +86,9 @@ struct Graph {
     }
 
     // return the border nodes corresponding to a split represented by `node_set`
-    std::pair<std::set<std::string>, std::set<std::string>> get_border_nodes(const std::set<std::string> &node_set) const {
-        //TODO:
-    }
+    // std::pair<std::set<std::string>, std::set<std::string>> get_border_nodes(const std::set<std::string> &node_set) const {
+    //     //TODO:
+    // }
 
     std::string merge(const std::vector<std::string> &nodes_to_merge) {
         if (nodes_to_merge.size() == 0) {
@@ -105,21 +105,18 @@ struct Graph {
         return merged_node.node_name;
     }
 
-    void update_net() {
+    void merge(std::string src, std::string target) {
+        nodes[target].merge_with(nodes[src]);
+        nodes.erase(src);
+    }
+
+    void update_net(std::map<std::string, std::string> mapping) {
         // update nets' node list
         auto it = nets.begin();
         while (it != nets.end()) {
             std::set<std::string> new_node_set;
             for (const auto &node: it->node_set) {
-                for (const auto &n: nodes) {
-                    if (n.second.node_set.count(node) > 0) {
-                        new_node_set.insert(n.second.node_name);
-                        break;
-                    }
-                }
-                // if (nodes.count(node) > 0) {
-                //     new_node_set.insert(node);
-                // }
+                new_node_set.insert(mapping[node]);
             }
             if (new_node_set.size() == 1) {
                 it = nets.erase(it);

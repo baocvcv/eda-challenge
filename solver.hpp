@@ -6,7 +6,8 @@
 #include "net.hpp"
 #include "fpga.hpp"
 #include "graph.hpp"
-#include "lib/patoh.h"
+#include "pq.hpp"
+// #include "lib/patoh.h"
 
 #define COARSEN_THRESH 0.05
 
@@ -136,6 +137,7 @@ private:
         return res;
     }
 
+    /*
     Result _run_patoh(GraphResource &gr) {
         // pack gr into format accepted by patoh
         auto &nodes = gr.first.nodes;
@@ -167,6 +169,7 @@ private:
 
         // unpack result
     }
+    */
 
     Result _run_multilevel(GraphResource &gr) {
         auto &resources = gr.second;
@@ -188,6 +191,13 @@ private:
         }
 
         auto res = _bisect(gr.first, resources);
+        //TODO:
+        std::cout << "0: ";
+        for (auto &f: res[0].second) std::cout << f << " ";
+        std::cout << std::endl;
+        std::cout << "1: ";
+        for (auto &f: res[1].second) std::cout << f << " ";
+        std::cout << std::endl;
         if (res.size() == 2) {
             Result r0 = _run_multilevel(res[0]);
             Result r1 = _run_multilevel(res[1]);
@@ -220,14 +230,11 @@ private:
 
             // int node_num;
             std::string node_name;
-            int resources[10];
+            uint64_t resources[10];
             std::set<std::string> clk_names;
             bool is_ff = false;
 
             iss >> node_name;
-            // if (node_name.substr(0, 2) == "gp") // ignore gp nodes
-            //     continue;
-            // node_num = std::stoi(node_name.substr(1));
             for (int i = 0; i < 10; i++) {
                 iss >> resources[i];
             }
@@ -264,9 +271,9 @@ private:
         }
 
         // map from net list string to weigh
-        std::map<std::string, int> net_raw;
+        std::map<std::string, uint64_t> net_raw;
         std::string net = "";
-        int weight = 0; // weight of the `net`
+        uint64_t weight = 0; // weight of the `net`
         std::string line;
         while (std::getline(in, line)) {
             int pos = line.find_first_of(' ');
@@ -276,7 +283,7 @@ private:
             pos = line.find_first_of(' ');
             if (pos != std::string::npos) { // type "s"
                 line = line.substr(pos + 1);
-                weight = std::stoi(line);
+                weight = std::stoul(line);
 
                 if (net != "") {
                     // duplicate net will have their weights summed up
@@ -296,7 +303,7 @@ private:
         std::vector<Net> nets;
         for (auto &e: net_raw) {
             int idx = nets.size();
-            int weight = e.second;
+            auto weight = e.second;
 
             std::istringstream iss(e.first);
             std::string driver;
@@ -327,8 +334,8 @@ private:
 
         std::string line;
         while (std::getline(in, line)) {
-            int resources[10];
-            std::vector<int> int_list;
+            uint64_t resources[10];
+            std::vector<uint64_t> int_list;
 
             int pos = line.find_first_of(' ');
             line = line.substr(pos + 1);
@@ -346,7 +353,7 @@ private:
                 std::istringstream iss2(rest_of_line);
                 std::string tmp;
                 while (iss2 >> tmp) {
-                    int_list.push_back(std::stoi(tmp));
+                    int_list.push_back(std::stoul(tmp));
                 }
             }
             fpgas.emplace_back(resources, int_list);
@@ -403,7 +410,7 @@ private:
      * @return Error 
      */
     Error _check_fpga_resource_constraints() {
-        int required_resources[10], available_resources[10];
+        uint64_t required_resources[10], available_resources[10];
         for (int i = 0; i < 10; i++) {
             required_resources[i] = 0;
             available_resources[i] = 0;
@@ -426,7 +433,9 @@ private:
                 continue;
             if (available_resources[i] < required_resources[i]) {
                 std::ostringstream oss;
-                oss << "Error: Not enough " << resource_names[i] << " resources." << std::endl;
+                oss << "Error: Not enough " << resource_names[i] << " resources. ";
+                oss << required_resources[i] << " required, " << available_resources[i] << " available.";
+                oss << std::endl;
                 return {true, oss.str()};
             }
         }
@@ -452,7 +461,48 @@ private:
     // coarsen
     std::vector<Graph> _coarsen(Graph &graph, std::set<int> available_fpgas) {
         std::vector<Graph> res;
-        Graph cur_graph = graph; //TODO: better options?
+        /*
+        step 1, collect all the nets with size 2
+        Graph g = graph.make_copy();
+        std::map<std::string, std::string> matched;
+        for (auto &e: g.nodes) {
+            auto &n = e.first;
+            matched[n] = n;  // default value
+
+            int c = 0;
+            std::string match = "";
+            for (auto net: graph.nodes[n].net_set) {
+                if (graph.nets[net].node_set.size() == 2) {
+                    std::string other;
+                    for (auto &_n: graph.nets[net].node_set)
+                        if (_n != n)
+                            other = _n;
+                    int d = graph.nodes[other].net_set.size();
+                    if (d > c) {
+                        c = d;
+                        match = other;
+                    }
+                }
+            }
+            if (c > 0) {
+                bool cond1 = graph.nodes[n].net_set.size() < c;
+                int f0 = graph.nodes[n].assigned_fpga;
+                int f1 = graph.nodes[match].assigned_fpga;
+                bool cond2 = f0 < 0 || f1 < 0 || f0 == f1;
+                if (cond1 && cond2)
+                    matched[n] = match;
+            } 
+        }
+        for (auto &e: matched) {
+            if (e.first != e.second) {
+                g.merge(e.first, e.second);
+            }
+        }
+        g.update_net(matched);
+        res.push_back(g);
+        */
+
+        Graph cur_graph = graph;
         int size = cur_graph.nodes.size(); // num vertices
         float rate_of_change = 1.0;
         while (rate_of_change > COARSEN_THRESH) {
@@ -544,8 +594,6 @@ private:
                     }
                 }
             }
-            new_graph.update_net();
-
             if (cur_graph.nodes.size() != matched_vertices.size()) {
                 for (auto &n: cur_graph.nodes) {
                     if (matched_vertices.count(n.first) == 0) {
@@ -568,6 +616,7 @@ private:
             // std::cout << matched_vertices.size() << " " << all_nodes.size() << " " << cur_graph.nodes.size() << std::endl;
             
             // add to list
+            new_graph.update_net(matched_vertices);
             res.push_back(new_graph);
             cur_graph = res.back();
 
@@ -581,6 +630,10 @@ private:
     }
 
     // split
+    //TODO: for int:
+    // 1. use all the fpgas and use one board each time
+    // 2. stuff as many related nodes in the same segment as much as possible
+    // 3. reluctant to restart
     TmpResult _split(Graph &graph, const std::set<int> &available_fpgas) {
         auto &nodes = graph.nodes;
         auto &nets = graph.nets;
@@ -588,8 +641,8 @@ private:
         if (nodes.size() == 0) return TmpResult();
 
         std::set<std::string> selected_nodes;
-        int resources_used[10]; 
-        int resources_needed[10];
+        uint64_t resources_used[10];  // resources used by selected nodes
+        uint64_t resources_needed[10]; // resources needed by the graph
         for (int i = 0; i < 10; i++) { resources_used[i] = resources_needed[i] = 0; }
         for (const auto &e: graph.nodes) {
             for (int i = 0; i < 10; i++) {
@@ -597,17 +650,18 @@ private:
             }
         }
         // a subset of `available_fpgas`, which are preferred in node allocation
-        std::set<int> usable_fpgas = _set_intersection(available_fpgas, _config.fixed_fpgas);
+        std::set<int> usable_fpgas = (_config.mode & Mode::INT_MINCUT) ? available_fpgas : _set_intersection(available_fpgas, _config.fixed_fpgas);
         // fpgas already used
         std::set<int> assigned_fpgas;
-        int total_available_resources[10];
+        uint64_t total_available_resources[10]; // resources provided by `usable_fpgas`
         while (true) { // enlarge usable_fpgas if needed
-            for (int i = 0; i < 10; i++) total_available_resources[i] = 0;
+            int i;
+            for (i = 0; i < 10; i++) total_available_resources[i] = 0;
             for (auto f: usable_fpgas) {
                 for (int i = 0; i < 10; i++) total_available_resources[i] += _fpgas[f].resources[i];
             }
             bool flag = true;
-            for (int i = 0; i < 10; i++) {
+            for (i = 0; i < 10; i++) {
                 if (i != 1 && resources_needed[i] > total_available_resources[i]) {
                     flag = false;
                     break;
@@ -621,59 +675,57 @@ private:
                     }
                 }
                 // cannot allocate more boards
-                std::cerr << "Error: not enough resources" << std::endl;
+                std::cerr << "Error: not enough " << resource_names[i] << " resources. ";
+                std::cerr << "Require " << resources_needed[i] << ", have " << total_available_resources[i];
+                std::cerr << std::endl;
                 return TmpResult();
             } else {
                 break;
             }
         }
         int num_fpga = usable_fpgas.size();
-        int balanced_allocation[10];
-        for (int i = 0; i < 10; i++)
-            balanced_allocation[i] = resources_needed[i] / num_fpga;
-        int available_resources[2][10]; // available resources for each split
+        uint64_t available_resources[2][10]; // available resources for each split
         for (int i = 0; i < 20; i++) available_resources[i/10][i%10] = 0;
 
-        /* priority queue */
-        std::map<std::string, int> node2cost;
-        std::vector<std::string> pq;
+        //TODO: balance resources
+        int balanced_allocation[10];
+        float importance_index[10];
+        for (int i = 0; i < 10; i++) {
+            balanced_allocation[i] = resources_needed[i] / num_fpga;
+            importance_index[i] = (resources_needed[i] == 0 || i == 1) ? 0 :
+                                  exp(0.5 * resources_needed[i] / (float)total_available_resources[i]) * log10f(resources_needed[i]);
+            std::cout << importance_index[i] << " ";
+        }
+        int balance_idx = 0;
+        for (int i = 1; i < 10; i++)
+            if (importance_index[i] > importance_index[balance_idx])
+                balance_idx = i;
+        std::cout << std::endl << "Selected: " << balance_idx << " " << resource_names[balance_idx] << std::endl;
 
-        auto comp = [&](const std::string &n1, const std::string &n2) { return node2cost[n1] > node2cost[n2]; };
-        // push pq
-        auto push_pq = [&](std::string n) {
-            pq.push_back(n); std::push_heap(pq.begin(), pq.end(), comp);
-        };
-        // pop the top element from pq
-        auto pop_pq = [&]() -> std::string {
-            std::pop_heap(pq.begin(), pq.end(), comp); auto cur_node_name = pq.back(); pq.pop_back();
-            node2cost.erase(cur_node_name);
-            return cur_node_name;
-        };
+        /* priority queue */
+        std::vector<std::pair<int, int>> pin_connectivity;
+        my_pq<std::string> pq;
+
+        for (int i = 0; i < nets.size(); i++) {
+            // init to (0, net_size), because nothing is selected at the beginning
+            pin_connectivity.emplace_back(0, nets[i].node_set.size());
+        }
+
         // calculates the FM gain
         auto calc_cost = [&](const std::string &node_name) -> int {
             // if a node cannot be selected, then the cost is INT_MAX
             if (assigned_fpgas.size() >= usable_fpgas.size()/2 && nodes[node_name].is_fixed()) {
-                return INT_MAX;
+                return INT_MIN;
             }
-
-            //TODO: is this correct?
             //TODO: more accurate cost function
             int cost = 0;
             for (auto net_num: nodes[node_name].net_set) {
-                bool all_other_nodes_selected = true;
-                bool all_nodes_unselected = true;
-                for (const auto &name: nets[net_num].node_set) {
-                    if (selected_nodes.count(name) > 0) {
-                        // some name selected
-                        all_nodes_unselected = false;
-                    } else {
-                        all_other_nodes_selected = false;
-                    }
-                }
+                bool all_other_nodes_selected = pin_connectivity[net_num].second == 1;
+                bool all_nodes_unselected = pin_connectivity[net_num].first == 0;
                 if (all_other_nodes_selected) { // about to become an inside net
-                    cost -= nets[net_num].cost;
-                } else if (all_nodes_unselected) { // about to become a cut net
                     cost += nets[net_num].cost;
+                } else if (all_nodes_unselected) { // about to become a cut net
+                    cost -= nets[net_num].cost;
                 }
             }
             return cost;
@@ -681,28 +733,32 @@ private:
         // add edges to pq
         auto add_related_edges = [&](const std::vector<std::string> &nodes_to_add) {
             // check if there are enough resources
-            int resources_d[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            uint64_t resources_d[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
             for (const auto &n: nodes_to_add) {
                 for (int i = 0 ; i < 10; i++) resources_d[i] += nodes[n].resources[i];
             }
             for (int i = 0; i < 10; i++) {
                 if (i == 1) continue;
                 if (resources_used[i] + resources_d[i] > available_resources[0][i])
+                    // exceeds resource limit, cannot add
                     return;
             }
+            // udpate resource used
             for (int i = 0; i < 10; i++) resources_used[i] += resources_d[i];
-            // add nodes
+
+            // add nodes to selected
             selected_nodes.insert(nodes_to_add.begin(), nodes_to_add.end());
             std::set<std::string> nodes_to_update;
             for (const auto &n: nodes_to_add) { // every newly added node
-                // for (const auto &net_num: nodes[n].net_set) { // every related net
-                //     for (const auto &nn: nets[net_num].node_set) { // every node in that net
-                for (const auto &nn: graph.neighbors(n)) {
+                for (const auto &net_num: nodes[n].net_set) { // update `pin_connectivity`
+                    auto con = pin_connectivity[net_num];
+                    pin_connectivity[net_num] = {con.first + 1, con.second - 1};
+                }
+                for (const auto &nn: graph.neighbors(n)) { // add new boundary nodes to pq
                     bool is_selected = selected_nodes.count(nn);
-                    bool is_in_queue = node2cost.count(nn);
+                    bool is_in_queue = pq.contains(nn);
                     if (!is_selected && !is_in_queue) { // add new node
-                        node2cost[nn] = calc_cost(nn);
-                        push_pq(nn);
+                        pq.insert(nn, calc_cost(nn));
                     } else if (is_in_queue) { // update node already in queue
                         nodes_to_update.insert(nn);
                     }
@@ -710,23 +766,12 @@ private:
             }
 
             // update pq
-            bool queue_updated = false; // whether elements in queue are updated
-            //TODO: this is too slow
-            // #pragma omp parallel for
-            // for (const auto &nn: nodes_to_update) {
-            //     int new_cost = calc_cost(nn);
-            //     int& prev_cost = node2cost[nn];
-            //     if (new_cost != prev_cost) {
-            //         prev_cost = new_cost;
-            //         queue_updated = true;
-            //     }
-            // }
-            if (queue_updated)
-                std::make_heap(pq.begin(), pq.end(), comp);
+            for (const auto &nn: nodes_to_update) {
+                pq.update(nn, calc_cost(nn));
+            }
         };
 
         /* init pq */
-        //TODO: start with a random vertex??
         // start with a random initial vertex with fixed assignment
         std::map<int, std::vector<std::string>> fixed_assignment;
         for (const auto &e: nodes) {
@@ -745,16 +790,12 @@ private:
             int _start = fixes[rand() % fixes.size()];
             assigned_fpgas.insert(_start);
             nodes_to_add = fixed_assignment[_start];
-            // add_related_edges(fixed_assignment[_start]);
         } else {
-            // select a board
-            int fpga = *available_fpgas.begin();
+            int fpga = *available_fpgas.begin(); // select a board
             assigned_fpgas.insert(fpga);
-            // select random vertex
-            int _start = rand() % nodes.size();
+            int _start = rand() % nodes.size(); // select random vertex
             auto it = nodes.begin();
             while (_start-- > 0) it++;
-            // add_related_edges(std::vector<std::string>{it->first});
             nodes_to_add.push_back(it->first);
         }
         for (auto fpga: usable_fpgas) { // calcualte available resources
@@ -766,35 +807,39 @@ private:
         
         /* split */
         // select the best and update the queue
-        // until the resource constraint and balanced conditions are met
+        // until the resource constraint and balance conditions are met
         auto is_acceptable = [&]() -> bool {
             int num_fpga_used = assigned_fpgas.size();
             /* check resource constraints */
             int num_balanced = 0;
+            bool selected_dim_balanced = false;
             for (int i = 0; i < 10; i++) {
-                if (i == 1) continue;
-                int res_other = resources_needed[i] - resources_used[i];
-                // resource limit
-                if (resources_used[i] > available_resources[0][i] || res_other > available_resources[1][i]) {
-                    return false;
+                if (i != 1) { // resource limit
+                    uint64_t res_other = resources_needed[i] - resources_used[i];
+                    if (resources_used[i] > available_resources[0][i] || res_other > available_resources[1][i]) {
+                        return false;
+                    }
                 }
-                // resource balance
-                if (balanced_allocation[i] != 0) {
-                    //TODO: refine balanced conditoin
+                if (balanced_allocation[i] != 0) { // resource balance
                     double ratio = fabs(1 - resources_used[i]/((double)balanced_allocation[i] * num_fpga_used)) * 100;
-                    if (ratio <= _config.mean_percent)
+                    if (ratio <= _config.mean_percent) {
                         num_balanced++;
+                        if (i == balance_idx) {
+                            selected_dim_balanced = true;
+                        }
+                    }
                 }
                 // TODO: add constraints for int-list in --mean-mincut?
             }
-
-            //TODO: add other constraints
-            return num_balanced > 0;
-            // return true;
+            if (_config.mode & Mode::INT_MINCUT)
+                return true;
+            if (_config.mode & Mode::MEAN_MINCUT)
+                return selected_dim_balanced && num_balanced > 2;
+            return selected_dim_balanced;
         };
         std::set<std::string> node_visited;
         while (!is_acceptable() && pq.size() > 0) {
-            std::string cur_node_name = pop_pq();
+            std::string cur_node_name = pq.pop();
             node_visited.insert(cur_node_name);
             Node &cur_node = nodes[cur_node_name];
             if (cur_node.is_fixed() && assigned_fpgas.size() < usable_fpgas.size()/2) {
@@ -819,15 +864,13 @@ private:
                 }
                 if (vt.size() > 0) {
                     std::string n = vt[rand() % vt.size()];
-                    node2cost[n] = calc_cost(n);
-                    push_pq(n);
+                    pq.insert(n, calc_cost(n));
                 }
             }
         }
 
         /* parse result */
         // assign fpga
-        // assigned_fpga = assign_fpga();
         std::set<int> complement;
         for (auto i: available_fpgas) {
             if (assigned_fpgas.count(i) == 0)
@@ -869,16 +912,174 @@ private:
         auto &nodes_list = result.first;
         auto &fpga_list = result.second;
 
-        assert(nodes_list.size() == 2);
+        if (nodes_list.size() != 2) {
+            std::cerr << "Error: cannot perform partition." << std::endl;
+            exit(1);
+        }
         
-        auto nodes1 = child.unwrap(nodes_list[0]);
-        auto nodes2 = child.unwrap(nodes_list[1]);
+        // auto last_nodes0 = child.unwrap(nodes_list[0]);
+        // auto last_nodes1 = child.unwrap(nodes_list[1]);
+        std::set<std::string> nodes[] = { child.unwrap(nodes_list[0]), child.unwrap(nodes_list[1]) };
         
-        // adjustments
-        //TODO
+        bool improved = true;
+        int check_interval = 0.001 * parent.nodes.size();
+        check_interval = check_interval > 50 ? check_interval : 50;
+        while (improved) {
+            improved = false;
+            // adjustments
+            // calc resource limits
+            uint64_t used_resources[2][10];
+            uint64_t available_resources[2][10];
+            for (int i = 0; i < 10; i++) {
+                used_resources[0][i] = 0;
+                used_resources[1][i] = 0;
+                available_resources[0][i] = 0;
+                available_resources[1][i] = 0;
+            }
+            for (int i = 0; i < 2; i++) {
+                for (auto &n: nodes[i])
+                    for (int j = 0; j < 10; j++)
+                        used_resources[i][j] += parent.nodes[n].resources[j];
+                for (auto &f: fpga_list[i])
+                    for (int j = 0; j < 10; j++)
+                        available_resources[i][j] += _fpgas[f].resources[j];
+            }
+            // pq
+            std::vector<std::pair<int, int>> pin_connectivity;
+            my_pq<std::string> pq;
+
+            auto calc_cost = [&]() -> int {
+                int cost = 0;
+                for (int i = 0; i < pin_connectivity.size(); i++) {
+                    auto &e = pin_connectivity[i];
+                    if (e.first > 0 && e.second > 0) {
+                        cost += parent.nets[i].cost;
+                    }
+                }
+                return cost;
+            };
+
+            for (int i = 0; i < parent.nets.size(); i++) { // init pin_connectivity
+                int n0 = 0;
+                for (auto &n: parent.nets[i].node_set) {
+                    if (nodes[0].count(n) > 0)
+                        n0++;
+                }
+                pin_connectivity.emplace_back(n0, parent.nets[i].node_set.size() - n0);
+            }
+            std::map<std::string, int> border_nodes_cost;
+            for (int i = 0; i < parent.nets.size(); i++) { // init pin_connectivity
+                if (pin_connectivity[i].first == 0 || pin_connectivity[i].second == 0) // internal net
+                    continue;
+                for (auto &n: parent.nets[i].node_set) { // calc cost
+                    if (border_nodes_cost.count(n) == 0)
+                        border_nodes_cost[n] = -parent.nodes[n].net_set.size();
+                    if (pin_connectivity[i].first == 1 && nodes[0].count(n) > 0)
+                        border_nodes_cost[n] += 2;
+                    else if (pin_connectivity[i].second == 1 && nodes[1].count(n) > 0)
+                        border_nodes_cost[n] += 2;
+                    else
+                        border_nodes_cost[n] += 1;
+                }
+            }
+            for (auto &e: border_nodes_cost) {
+                pq.insert(e.first, e.second);
+            }
+
+            int cur_cost = calc_cost();
+            std::list<std::string> move_history;
+            int i, last_improve;
+            for (i = 0, last_improve = -1; (i - last_improve <= check_interval) && pq.size() > 0; i++) {
+                auto node_to_move = pq.pop();
+                int from = nodes[0].count(node_to_move) ? 0 : 1;
+
+                // movable
+                bool is_movable = true;
+                // resource constraint
+                uint64_t res_new[20];
+                for (int j = 0; j < 10; j++) {
+                    res_new[from*10 + j] = used_resources[from][j] - parent.nodes[node_to_move].resources[j];
+                    res_new[(1-from)*10 + j] = used_resources[1-from][j] + parent.nodes[node_to_move].resources[j];
+                }
+                for (int j = 0; j < 10; j++) {
+                    if (j == 1) continue;
+                    if (res_new[j] > available_resources[0][j] || res_new[10+j] > available_resources[1][j]) {
+                        is_movable = false;
+                        break;
+                    }
+                }
+                // fixed assignment
+                if (parent.nodes[node_to_move].assigned_fpga >= 0)
+                    is_movable = false;
+                if (!is_movable) { // skip
+                    i--;
+                    continue;
+                }
+
+                // move
+                move_history.push_back(node_to_move);
+                if (move_history.size() > check_interval) move_history.pop_front();
+                nodes[1-from].insert(node_to_move);
+                nodes[from].erase(node_to_move);
+                for (int j = 0; j < 10; j++) { // update resources
+                    used_resources[0][j] = res_new[j];
+                    used_resources[1][j] = res_new[10+j];
+                }
+
+                // update pin_con
+                int d0 = from == 0 ? -1 : 1;
+                int d1 = from == 1 ? -1 : 1;
+                for (auto &net: parent.nodes[node_to_move].net_set) {
+                    auto old = pin_connectivity[net];
+                    std::pair<int, int> _new = { old.first + d0, old.second + d1 };
+                    pin_connectivity[net] = _new;
+                    if (old.first == 0 || old.second == 0 || _new.first == 1 || _new.second == 1 || _new.first == 0 || _new.second == 0) {
+                        for (auto &n: parent.nets[net].node_set) {
+                            bool in_queue = pq.contains(n);
+                            if (old.first == 0 || old.second == 0) { // net becomes external
+                                if (in_queue) {
+                                    pq.update(n, pq.cost[n] + 1);
+                                } else {
+                                    pq.insert(n, -parent.nodes[n].net_set.size() + 1);
+                                }
+                                in_queue = true;
+                            }
+                            if (_new.first == 1 || _new.second == 1) { // net about to become internal
+                                if (in_queue) {
+                                    if (_new.first == 1 && nodes[0].count(n) > 0)
+                                        pq.update(n, pq.cost[n] + 1);
+                                    if (_new.second == 1 && nodes[1].count(n) > 0)
+                                        pq.update(n, pq.cost[n] + 1);
+                                }
+                            }
+                            if (_new.first == 0 || _new.second == 0) { // became internal
+                                if (in_queue) {
+                                    pq.update(n, pq.cost[n] - 1);
+                                }
+                            }
+                        }
+                    }
+                }
+                // calculate new cost
+                int new_cost = calc_cost();
+                if (new_cost < cur_cost) {
+                    improved = true;
+                    last_improve = i;
+                    cur_cost = new_cost;
+                }
+            }
+            // reverse moves
+            while (--i > last_improve) {
+                auto n = move_history.back();
+                move_history.pop_back();
+                int from = nodes[0].count(n) > 0 ? 0 : 1;
+                nodes[from].erase(n);
+                nodes[1-from].insert(n);
+            }
+        }
 
         return {
-            std::vector<std::set<std::string>>{nodes1, nodes2},
+            std::vector<std::set<std::string>>{nodes[0], nodes[1]},
             fpga_list
         };
     }
@@ -921,7 +1122,7 @@ private:
         for (const auto &e: _cur_result_T) {
             int board = e.first;
             auto &nodes = e.second;
-            int resources_used[10];
+            uint64_t resources_used[10];
             for (int i = 0; i < 10; i++) resources_used[i] = 0;
             for (const auto &name: nodes) {
                 Node &n = _original_graph.nodes[name];

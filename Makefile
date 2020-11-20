@@ -1,7 +1,7 @@
 CC := g++
-FLAGS := -std=c++14
+FLAGS := -std=c++11
 OPTFLAGS := -O3
-DBG_FLAGS := -std=c++14 -g -DDebug
+DBG_FLAGS := -std=c++11 -g -DDebug
 source := main.cpp
 headers := $(wildcard *.h *.hpp)
 

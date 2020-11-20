@@ -2,6 +2,7 @@
 #define __NET_HPP__
 
 #include <set>
+#include <cinttypes>
 
 struct Node;
 
@@ -12,7 +13,7 @@ struct Net {
 
     std::string driver;
 
-    int cost;
+    uint32_t cost;
 
     Net (int _index, const std::string &_driver, int _cost): index(_index), driver(_driver), cost(_cost) {
         node_set.insert(_driver);

@@ -6,6 +6,7 @@
 
 #include <set>
 #include <string>
+#include <cinttypes>
 
 /**
  * @brief (hyper) graph node
@@ -25,7 +26,7 @@ struct Node {
     std::set<int> net_set;
 
     // resources used by this node
-    int resources[10];
+    uint64_t resources[10];
 
     /* attributes */
     std::set<int> drives;
@@ -46,7 +47,7 @@ struct Node {
             resources[i] = 0;
     }
 
-    Node(std::string _node_name, int *_resources, const std::set<std::string> &_clk_names, bool _is_ff):
+    Node(std::string _node_name, uint64_t *_resources, const std::set<std::string> &_clk_names, bool _is_ff):
         is_leaf(true),
         node_name(_node_name),
         clk_names(_clk_names),
